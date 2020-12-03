@@ -38,10 +38,19 @@ class RegLossObjOneAPI : public ObjFunction {
   RegLossObjOneAPI() = default;
 
   void Configure(const std::vector<std::pair<std::string, std::string> >& args) override {
-    param_.UpdateAllowUnknown(args);
+    GenericParameter param;
+    param.UpdateAllowUnknown(args);
+    
+    std::vector<cl::sycl::device> devices = cl::sycl::device::get_devices();
 
-    cl::sycl::default_selector selector;
-    qu_ = cl::sycl::queue(selector);
+    if (param.device_id != GenericParameter::kDefaultId) {
+      qu_ = cl::sycl::queue(devices[param.device_id]);
+    } else {	
+      cl::sycl::default_selector selector;
+      qu_ = cl::sycl::queue(selector);
+    }
+
+    param_.UpdateAllowUnknown(args);
   }
 
   void GetGradient(const HostDeviceVector<bst_float>& preds,

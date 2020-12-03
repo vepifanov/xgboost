@@ -21,6 +21,83 @@ namespace predictor {
 
 DMLC_REGISTRY_FILE_TAG(predictor_oneapi);
 
+class PredictorOneAPI : public Predictor {
+ public:
+  explicit PredictorOneAPI(GenericParameter const* generic_param) :
+      Predictor::Predictor{generic_param} {
+    bool is_cpu = false;
+    std::vector<cl::sycl::device> devices = cl::sycl::device::get_devices();
+    for (size_t i = 0; i < devices.size(); i++)
+    {
+      LOG(INFO) << "device_id = " << i << ", name = " << devices[i].get_info<cl::sycl::info::device::name>();
+    }
+    if (generic_param->device_id != GenericParameter::kDefaultId) {
+    	int n_devices = (int)devices.size();
+    	CHECK_LT(generic_param->device_id, n_devices);
+    	is_cpu = devices[generic_param->device_id].is_cpu() | devices[generic_param->device_id].is_host();
+    }
+    LOG(INFO) << "device_id = " << generic_param->device_id << ", is_cpu = " << int(is_cpu);
+    
+    if (is_cpu)
+    {
+      predictor_backend_.reset(Predictor::Create("cpu_predictor", generic_param));
+    }
+    else
+    {
+      predictor_backend_.reset(Predictor::Create("oneapi_predictor_gpu", generic_param));
+    }
+  }
+
+  void Configure(const std::vector<std::pair<std::string, std::string>>& args) {
+  	if (predictor_backend_) {
+  	  predictor_backend_->Configure(args);
+  	}
+  }
+
+  // ntree_limit is a very problematic parameter, as it's ambiguous in the context of
+  // multi-output and forest.  Same problem exists for tree_begin
+  void PredictBatch(DMatrix* dmat, PredictionCacheEntry* predts,
+                    const gbm::GBTreeModel& model, int tree_begin,
+                    uint32_t const ntree_limit = 0) override {
+    predictor_backend_->PredictBatch(dmat, predts, model, tree_begin, ntree_limit);
+  }
+
+  void InplacePredict(dmlc::any const &x, const gbm::GBTreeModel &model,
+                      float missing, PredictionCacheEntry *out_preds,
+                      uint32_t tree_begin, unsigned tree_end) const override {
+    predictor_backend_->InplacePredict(x, model, missing, out_preds, tree_begin, tree_end);
+  }
+
+  void PredictInstance(const SparsePage::Inst& inst,
+                       std::vector<bst_float>* out_preds,
+                       const gbm::GBTreeModel& model, unsigned ntree_limit) override {
+    predictor_backend_->PredictInstance(inst, out_preds, model, ntree_limit);
+  }
+
+  void PredictLeaf(DMatrix* p_fmat, std::vector<bst_float>* out_preds,
+                   const gbm::GBTreeModel& model, unsigned ntree_limit) override {
+    predictor_backend_->PredictLeaf(p_fmat, out_preds, model, ntree_limit);
+  }
+
+  void PredictContribution(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_contribs,
+                           const gbm::GBTreeModel& model, uint32_t ntree_limit,
+                           std::vector<bst_float>* tree_weights,
+                           bool approximate, int condition,
+                           unsigned condition_feature) override {
+    predictor_backend_->PredictContribution(p_fmat, out_contribs, model, ntree_limit, tree_weights, approximate, condition, condition_feature);
+  }
+
+  void PredictInteractionContributions(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_contribs,
+                                       const gbm::GBTreeModel& model, unsigned ntree_limit,
+                                       std::vector<bst_float>* tree_weights,
+                                       bool approximate) override {
+    predictor_backend_->PredictInteractionContributions(p_fmat, out_contribs, model, ntree_limit, tree_weights, approximate);
+  }
+
+ private:
+
+  std::unique_ptr<Predictor> predictor_backend_;
+};
 
 struct DeviceNodeOneAPI {
   DeviceNodeOneAPI()
@@ -167,7 +244,7 @@ float GetLeafWeight(int ridx, const DeviceNodeOneAPI* tree, EntryOneAPI* data, s
   return n.GetWeight();
 }
 
-class PredictorOneAPI : public Predictor {
+class GPUPredictorOneAPI : public Predictor {
  protected:
   void InitOutPredictions(const MetaInfo& info,
                           HostDeviceVector<bst_float>* out_preds,
@@ -247,10 +324,15 @@ class PredictorOneAPI : public Predictor {
   }
 
  public:
-  explicit PredictorOneAPI(GenericParameter const* generic_param) :
+  explicit GPUPredictorOneAPI(GenericParameter const* generic_param) :
       Predictor::Predictor{generic_param}, cpu_predictor(Predictor::Create("cpu_predictor", generic_param)) {
-    cl::sycl::default_selector selector;
-    qu_ = cl::sycl::queue(selector);
+    std::vector<cl::sycl::device> devices = cl::sycl::device::get_devices();
+    if (generic_param->device_id != GenericParameter::kDefaultId) {
+      qu_ = cl::sycl::queue(devices[generic_param->device_id]);
+    } else {	
+      cl::sycl::default_selector selector;
+      qu_ = cl::sycl::queue(selector);
+    }
   }
 
   // ntree_limit is a very problematic parameter, as it's ambiguous in the context of
@@ -359,6 +441,12 @@ XGBOOST_REGISTER_PREDICTOR(PredictorOneAPI, "oneapi_predictor")
 .describe("Make predictions using DPC++.")
 .set_body([](GenericParameter const* generic_param) {
             return new PredictorOneAPI(generic_param);
+          });
+
+XGBOOST_REGISTER_PREDICTOR(GPUPredictorOneAPI, "oneapi_predictor_gpu")
+.describe("Make predictions using DPC++.")
+.set_body([](GenericParameter const* generic_param) {
+            return new GPUPredictorOneAPI(generic_param);
           });
 }  // namespace predictor
 }  // namespace xgboost

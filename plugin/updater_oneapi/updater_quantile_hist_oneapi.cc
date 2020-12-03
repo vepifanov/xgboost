@@ -36,11 +36,9 @@ namespace tree {
 
 DMLC_REGISTRY_FILE_TAG(updater_quantile_hist_oneapi);
 
-DMLC_REGISTER_PARAMETER(QuantileHistMakerParamOneAPI);
-
 void QuantileHistMakerOneAPI::Configure(const Args& args) {
-  QuantileHistMakerParamOneAPI sycl_param;
-  sycl_param.UpdateAllowUnknown(args);
+  GenericParameter param;
+  param.UpdateAllowUnknown(args);
 
   bool is_cpu = false;
   std::vector<cl::sycl::device> devices = cl::sycl::device::get_devices();
@@ -48,12 +46,12 @@ void QuantileHistMakerOneAPI::Configure(const Args& args) {
   {
     LOG(INFO) << "device_id = " << i << ", name = " << devices[i].get_info<cl::sycl::info::device::name>();
   }
-  if (sycl_param.device_id != QuantileHistMakerParamOneAPI::kDefaultId) {
+  if (param.device_id != GenericParameter::kDefaultId) {
   	int n_devices = (int)devices.size();
-  	CHECK_LT(sycl_param.device_id, n_devices);
-  	is_cpu = devices[sycl_param.device_id].is_cpu() | devices[sycl_param.device_id].is_host();
+  	CHECK_LT(param.device_id, n_devices);
+  	is_cpu = devices[param.device_id].is_cpu() | devices[param.device_id].is_host();
   }
-  LOG(INFO) << "device_id = " << sycl_param.device_id << ", is_cpu = " << int(is_cpu);
+  LOG(INFO) << "device_id = " << param.device_id << ", is_cpu = " << int(is_cpu);
 
   if (is_cpu)
   {
@@ -80,15 +78,15 @@ bool QuantileHistMakerOneAPI::UpdatePredictionCache(
 }
 
 void GPUQuantileHistMakerOneAPI::Configure(const Args& args) {
-  QuantileHistMakerParamOneAPI sycl_param;
-  sycl_param.UpdateAllowUnknown(args);
+  GenericParameter param;
+  param.UpdateAllowUnknown(args);
 
   std::vector<cl::sycl::device> devices = cl::sycl::device::get_devices();
 
-  if (sycl_param.device_id != QuantileHistMakerParamOneAPI::kDefaultId) {
-  	qu_ = cl::sycl::queue(devices[sycl_param.device_id]);
+  if (param.device_id != GenericParameter::kDefaultId) {
+  	qu_ = cl::sycl::queue(devices[param.device_id]);
   } else {	
-    cl::sycl::gpu_selector selector;
+    cl::sycl::default_selector selector;
     qu_ = cl::sycl::queue(selector);
   }
 
