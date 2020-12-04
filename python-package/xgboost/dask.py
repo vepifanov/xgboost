@@ -852,9 +852,9 @@ async def _predict_async(client, model, data, missing=numpy.nan, **kwargs):
             list_of_orders = [partition_order[part.key] for part in list_of_parts]
 
             device_id = -1
-            if 'oneapi_multi_gpu' in params and params['oneapi_multi_gpu'] == 1:
+            if 'oneapi_multi_gpu' in kwargs.keys() and kwargs['oneapi_multi_gpu'] == 1:
                 device_id = i
-            if 'oneapi_multi_node' in params and params['oneapi_multi_node'] == 1:
+            if 'oneapi_multi_node' in kwargs.keys() and kwargs['oneapi_multi_node'] == 1:
                 device_id = -1
 
             f = client.submit(func, worker_id=wid,
