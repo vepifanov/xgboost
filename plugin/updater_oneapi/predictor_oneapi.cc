@@ -48,7 +48,7 @@ class PredictorOneAPI : public Predictor {
     }
   }
 
-  void Configure(const std::vector<std::pair<std::string, std::string>>& args) {
+  void Configure(const std::vector<std::pair<std::string, std::string>>& args) override {
   	if (predictor_backend_) {
   	  predictor_backend_->Configure(args);
   	}
