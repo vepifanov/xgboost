@@ -639,7 +639,7 @@ async def _train_async(client,
     workers = list(_get_workers_from_data(dtrain, evals))
     _rabit_args = await _get_rabit_args(len(workers), client)
 
-    def dispatched_train(worker_addr, rabit_args, dtrain_ref, dtrain_idt, evals_ref):
+    def dispatched_train(worker_addr, rabit_args, dtrain_ref, dtrain_idt, evals_ref, device_id):
         '''Perform training on a single worker.  A local function prevents pickling.
 
         '''
@@ -665,6 +665,7 @@ async def _train_async(client,
                     LOGGER.info(msg)
                 else:
                     local_param[p] = worker.nthreads
+            local_param['device_id'] = device_id
             bst = worker_train(params=local_param,
                                dtrain=local_dtrain,
                                *args,
@@ -688,12 +689,20 @@ async def _train_async(client,
                                 for e, name in evals]
         else:
             evals_per_worker = []
+
+        device_id = -1
+        if 'oneapi_multi_gpu' in params and params['oneapi_multi_gpu'] == 1:
+            device_id = i
+        if 'oneapi_multi_node' in params and params['oneapi_multi_node'] == 1:
+            device_id = -1
+
         f = client.submit(dispatched_train,
                           worker_addr,
                           _rabit_args,
                           dtrain.create_fn_args(workers[i]),
                           id(dtrain),
                           evals_per_worker,
+                          device_id,
                           pure=False,
                           workers=[worker_addr])
         futures.append(f)
@@ -793,7 +802,7 @@ async def _predict_async(client, model, data, missing=numpy.nan, **kwargs):
     missing = data.missing
     meta_names = data.meta_names
 
-    def dispatched_predict(worker_id, list_of_orders, list_of_parts):
+    def dispatched_predict(worker_id, list_of_orders, list_of_parts, device_id):
         '''Perform prediction on each worker.'''
         LOGGER.info('Predicting on %d', worker_id)
         worker = distributed.get_worker()
@@ -801,6 +810,7 @@ async def _predict_async(client, model, data, missing=numpy.nan, **kwargs):
         predictions = []
 
         booster.set_param({'nthread': worker.nthreads})
+        booster.set_param({'device_id': device_id})
         for i, parts in enumerate(list_of_parts):
             (data, _, _, base_margin, _, _) = parts
             order = list_of_orders[i]
@@ -822,7 +832,7 @@ async def _predict_async(client, model, data, missing=numpy.nan, **kwargs):
 
         return predictions
 
-    def dispatched_get_shape(worker_id, list_of_orders, list_of_parts):
+    def dispatched_get_shape(worker_id, list_of_orders, list_of_parts, device_id):
         '''Get shape of data in each worker.'''
         LOGGER.info('Get shape on %d', worker_id)
         list_of_parts = _get_worker_parts_ordered(meta_names, list_of_parts)
@@ -841,9 +851,16 @@ async def _predict_async(client, model, data, missing=numpy.nan, **kwargs):
             list_of_parts = worker_map[worker_addr]
             list_of_orders = [partition_order[part.key] for part in list_of_parts]
 
+            device_id = -1
+            if 'oneapi_multi_gpu' in params and params['oneapi_multi_gpu'] == 1:
+                device_id = i
+            if 'oneapi_multi_node' in params and params['oneapi_multi_node'] == 1:
+                device_id = -1
+
             f = client.submit(func, worker_id=wid,
                               list_of_orders=list_of_orders,
                               list_of_parts=list_of_parts,
+                              device_id=device_id,
                               pure=True, workers=[worker_addr])
             assert isinstance(f, distributed.client.Future)
             futures.append(f)
