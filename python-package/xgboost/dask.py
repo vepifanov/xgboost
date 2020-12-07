@@ -804,7 +804,7 @@ async def _predict_async(client, model, data, missing=numpy.nan, **kwargs):
 
     def dispatched_predict(worker_id, list_of_orders, list_of_parts, device_id):
         '''Perform prediction on each worker.'''
-        LOGGER.info('Predicting on %d', worker_id)
+        LOGGER.info('Predicting on %d, device %d', worker_id, device_id)
         worker = distributed.get_worker()
         list_of_parts = _get_worker_parts_ordered(meta_names, list_of_parts)
         predictions = []
@@ -834,7 +834,7 @@ async def _predict_async(client, model, data, missing=numpy.nan, **kwargs):
 
     def dispatched_get_shape(worker_id, list_of_orders, list_of_parts, device_id):
         '''Get shape of data in each worker.'''
-        LOGGER.info('Get shape on %d', worker_id)
+        LOGGER.info('Get shape on %d, device %d', worker_id, device_id)
         list_of_parts = _get_worker_parts_ordered(meta_names, list_of_parts)
         shapes = []
         for i, parts in enumerate(list_of_parts):
@@ -853,7 +853,7 @@ async def _predict_async(client, model, data, missing=numpy.nan, **kwargs):
 
             device_id = -1
             if 'oneapi_multi_gpu' in kwargs.keys() and kwargs['oneapi_multi_gpu'] == 1:
-                device_id = i
+                device_id = wid
             if 'oneapi_multi_node' in kwargs.keys() and kwargs['oneapi_multi_node'] == 1:
                 device_id = -1
 
