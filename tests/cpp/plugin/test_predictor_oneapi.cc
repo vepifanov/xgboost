@@ -46,9 +46,10 @@ TEST(Plugin, OneAPIPredictorBasic) {
   }
 
   // Test predict leaf
-  std::vector<float> leaf_out_predictions;
+  HostDeviceVector<float> leaf_out_predictions;
   oneapi_predictor->PredictLeaf(dmat.get(), &leaf_out_predictions, model);
-  for (auto v : leaf_out_predictions) {
+  auto const& h_leaf_out_predictions = leaf_out_predictions.ConstHostVector();
+  for (auto v : h_leaf_out_predictions) {
     ASSERT_EQ(v, 0);
   }
 
@@ -82,7 +83,10 @@ TEST(Plugin, OneAPIPredictorBasic) {
 TEST(Plugin, OneAPIPredictorExternalMemory) {
   dmlc::TemporaryDirectory tmpdir;
   std::string filename = tmpdir.path + "/big.libsvm";
-  std::unique_ptr<DMatrix> dmat = CreateSparsePageDMatrix(12, 64, filename);
+  size_t constexpr kPageSize = 64, kEntriesPerCol = 3;
+  size_t constexpr kEntries = kPageSize * kEntriesPerCol * 2;
+
+  std::unique_ptr<DMatrix> dmat = CreateSparsePageDMatrix(kEntries, kPageSize, filename);
   auto lparam = CreateEmptyGenericParam(0);
 
   std::unique_ptr<Predictor> oneapi_predictor =
@@ -105,10 +109,11 @@ TEST(Plugin, OneAPIPredictorExternalMemory) {
   }
 
   // Test predict leaf
-  std::vector<float> leaf_out_predictions;
+  HostDeviceVector<float> leaf_out_predictions;
   oneapi_predictor->PredictLeaf(dmat.get(), &leaf_out_predictions, model);
-  ASSERT_EQ(leaf_out_predictions.size(), dmat->Info().num_row_);
-  for (const auto& v : leaf_out_predictions) {
+  ASSERT_EQ(leaf_out_predictions.Size(), dmat->Info().num_row_);
+  auto const& h_leaf_out_predictions = leaf_out_predictions.ConstHostVector();
+  for (const auto& v : h_leaf_out_predictions) {
     ASSERT_EQ(v, 0);
   }
 

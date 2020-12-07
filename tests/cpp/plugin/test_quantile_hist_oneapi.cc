@@ -426,7 +426,6 @@ class QuantileHistMockOneAPI : public GPUQuantileHistMakerOneAPI {
         // split by feature 0
         const size_t bin_id_min = gmat.cut.Ptrs()[0];
         const size_t bin_id_max = gmat.cut.Ptrs()[1];
-        LOG(INFO) << "partition bins " << bin_id_min << " " << bin_id_max;
 
         // attempt to split at different bins
         for (size_t split = 0; split < 4; split++) {
@@ -448,7 +447,6 @@ class QuantileHistMockOneAPI : public GPUQuantileHistMakerOneAPI {
 
           // if any were missing due to sparsity, we add them to the left or to the right
           size_t missing = kNRows - left_cnt - right_cnt;
-          LOG(INFO) << "partition " << left_cnt << " " << right_cnt << " " << missing;
           if (tree[0].DefaultLeft()) {
             left_cnt += missing;
           } else {
@@ -459,11 +457,24 @@ class QuantileHistMockOneAPI : public GPUQuantileHistMakerOneAPI {
           RealImpl::partition_builder_.Init(this->qu_, 1, [&](size_t node_in_set) {
             return num_row;
           });
+          cl::sycl::buffer<size_t, 1> parts_size(2);
+          {
+            auto parts_size_acc = parts_size.template get_access<cl::sycl::access::mode::write>();
+            for (size_t node_in_set = 0; node_in_set < 1; node_in_set++) {
+              parts_size_acc[node_in_set * 2] = 0;
+              parts_size_acc[node_in_set * 2 + 1] = 0;
+            }
+          }
           this->template PartitionKernel<uint8_t>(0, 0, common::Range1d(0, kNRows),
-                                                  split, cm, tree);
+                                                  split, cm, tree, parts_size);
+          {
+            auto parts_size_acc = parts_size.template get_access<cl::sycl::access::mode::write>();
+            for (size_t node_in_set = 0; node_in_set < 1; node_in_set++) {
+              RealImpl::partition_builder_.SetNLeftElems(node_in_set, parts_size_acc[node_in_set * 2]);
+              RealImpl::partition_builder_.SetNRightElems(node_in_set, parts_size_acc[node_in_set * 2 + 1]);
+            }
+          }
           RealImpl::partition_builder_.CalculateRowOffsets();
-          LOG(INFO) << "partition  get, " << RealImpl::partition_builder_.GetNLeftElems(0) << " " << RealImpl::partition_builder_.GetNRightElems(0);
-          LOG(INFO) << "partition real, " << left_cnt << " " << right_cnt;
           ASSERT_EQ(RealImpl::partition_builder_.GetNLeftElems(0), left_cnt);
           ASSERT_EQ(RealImpl::partition_builder_.GetNRightElems(0), right_cnt);
         }
