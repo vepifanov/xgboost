@@ -274,7 +274,8 @@ void BuildHistDenseKernel(cl::sycl::queue qu,
   const size_t max_nblocks = hist_buffer.Size() / (nbins * two);
   const size_t min_block_size = 128;
   const size_t blocks_local = 1;
-  const size_t feat_local = n_features < 512 ? n_features : 512;
+  const size_t max_feat_local = qu.get_device().get_info<cl::sycl::info::device::max_work_group_size>();
+  const size_t feat_local = n_features < max_feat_local ? n_features : max_feat_local;
   size_t nblocks = std::min(max_nblocks, size / min_block_size + !!(size % min_block_size));
   if (nblocks % blocks_local != 0) nblocks += blocks_local - nblocks % blocks_local;
   const size_t block_size = size / nblocks + !!(size % nblocks);
@@ -366,7 +367,8 @@ void BuildHistSparseKernel(cl::sycl::queue qu,
     });
   }).wait();
 
-  const size_t local_size = gmat.nfeatures > 512 ? 512 : gmat.nfeatures;
+  const size_t max_feat_local = qu.get_device().get_info<cl::sycl::info::device::max_work_group_size>();
+  const size_t local_size = gmat.nfeatures > max_feat_local ? max_feat_local : gmat.nfeatures;
 
   qu.submit([&](cl::sycl::handler& cgh) {
     cgh.parallel_for<>(cl::sycl::nd_range<2>(cl::sycl::range<2>(nblocks, local_size),

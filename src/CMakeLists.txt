@@ -18,6 +18,10 @@ if (USE_CUDA)
   target_link_libraries(objxgboost PRIVATE GPUTreeShap)
 endif (USE_CUDA)
 
+if (PLUGIN_UPDATER_ONEAPI)
+  target_compile_definitions(objxgboost PUBLIC -DXGBOOST_USE_ONEAPI=1)
+endif (PLUGIN_UPDATER_ONEAPI)
+
 target_include_directories(objxgboost
   PRIVATE
   ${xgboost_SOURCE_DIR}/include
