@@ -8,7 +8,6 @@ from hypothesis import given, strategies, assume, settings, note
 
 sys.path.append("tests/python")
 import testing as tm
-from test_predict import run_threaded_predict  # noqa
 
 rng = np.random.RandomState(1994)
 
@@ -25,10 +24,6 @@ class TestOneAPIPredict(unittest.TestCase):
         np.random.seed(1)
         test_num_rows = [10, 1000, 5000]
         test_num_cols = [10, 50, 500]
-        # This test passes for tree_method=gpu_hist and tree_method=exact. but
-        # for `hist` and `approx` the floating point error accumulates faster
-        # and fails even tol is set to 1e-4.  For `hist`, the mismatching rate
-        # with 5000 rows is 0.04.
         for num_rows in test_num_rows:
             for num_cols in test_num_cols:
                 dtrain = xgb.DMatrix(np.random.randn(num_rows, num_cols),
@@ -70,8 +65,6 @@ class TestOneAPIPredict(unittest.TestCase):
     def non_increasing(self, L):
         return all((y - x) < 0.001 for x, y in zip(L, L[1:]))
 
-    # Test case for a bug where multiple batch predictions made on a
-    # test set produce incorrect results
     @pytest.mark.skipif(**tm.no_sklearn())
     def test_multi_predict(self):
         from sklearn.datasets import make_regression
@@ -86,7 +79,7 @@ class TestOneAPIPredict(unittest.TestCase):
 
         params = {}
         params["tree_method"] = "hist"
-        params["updater"] = "grow_quntile_histmaker_oneapi"
+        params["updater"] = "grow_quantile_histmaker_oneapi"
 
         params['predictor'] = "oneapi_predictor"
         bst_oneapi_predict = xgb.train(params, dtrain)
@@ -124,16 +117,17 @@ class TestOneAPIPredict(unittest.TestCase):
 
         m = xgb.XGBRegressor(**params).fit(X_train, y_train)
         oneapi_train_score = m.score(X_train, y_train)
+        m = xgb.XGBRegressor(**params).fit(X_train, y_train)
         oneapi_test_score = m.score(X_test, y_test)
 
         assert np.allclose(cpu_train_score, oneapi_train_score)
         assert np.allclose(cpu_test_score, oneapi_test_score)
 
     @given(strategies.integers(1, 10),
-           tm.dataset_strategy, shap_parameter_strategy)
+           tm.dataset_strategy.filter(lambda x: x.name != "empty"), shap_parameter_strategy)
     @settings(deadline=None)
     def test_shap(self, num_rounds, dataset, param):
-        param.update({"predictor": "oneapi_predictor", "device_id": -1})
+        param.update({"predictor": "oneapi_predictor"})
         param = dataset.set_params(param)
         dmat = dataset.get_dmat()
         bst = xgb.train(param, dmat, num_rounds)
@@ -144,10 +138,10 @@ class TestOneAPIPredict(unittest.TestCase):
         assert np.allclose(np.sum(shap, axis=len(shap.shape) - 1), margin, 1e-3, 1e-3)
 
     @given(strategies.integers(1, 10),
-           tm.dataset_strategy, shap_parameter_strategy)
+           tm.dataset_strategy.filter(lambda x: x.name != "empty"), shap_parameter_strategy)
     @settings(deadline=None, max_examples=20)
     def test_shap_interactions(self, num_rounds, dataset, param):
-        param.update({"predictor": "oneapi_predictor", "device_id": -1})
+        param.update({"predictor": "oneapi_predictor"})
         param = dataset.set_params(param)
         dmat = dataset.get_dmat()
         bst = xgb.train(param, dmat, num_rounds)
