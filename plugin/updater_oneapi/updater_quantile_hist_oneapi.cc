@@ -1052,7 +1052,7 @@ inline void PartitionDenseKernel(common::Monitor & updater_monitor,
       if (is_left) {
         p_left_part[cl::sycl::atomic_fetch_add<size_t>(parts_size_acc[node_in_set * 2], 1)] = id;
       } else {
-        p_left_part[range_size - cl::sycl::atomic_fetch_add<size_t>(parts_size_acc[node_in_set * 2 + 1], 1)] = id;
+        p_left_part[range_size - cl::sycl::atomic_fetch_add<size_t>(parts_size_acc[node_in_set * 2 + 1], 1) - 1] = id;
       }
     });
   }).wait();
