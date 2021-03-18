@@ -19,15 +19,6 @@
 
 #include "CL/sycl.hpp"
 
-#if defined(XGBOOST_MM_PREFETCH_PRESENT)
-  #include <xmmintrin.h>
-  #define PREFETCH_READ_T0(addr) _mm_prefetch(reinterpret_cast<const char*>(addr), _MM_HINT_T0)
-#elif defined(XGBOOST_BUILTIN_PREFETCH_PRESENT)
-  #define PREFETCH_READ_T0(addr) __builtin_prefetch(reinterpret_cast<const char*>(addr), 0, 3)
-#else  // no SW pre-fetching available; PREFETCH_READ_T0 is no-op
-  #define PREFETCH_READ_T0(addr) do {} while (0)
-#endif  // defined(XGBOOST_MM_PREFETCH_PRESENT)
-
 namespace xgboost {
 namespace common {
 
@@ -227,30 +218,7 @@ template void SubtractionHist(cl::sycl::queue qu,
                               const GHistRowOneAPI<double>& src2,
                               size_t size);
 
-struct PrefetchOneAPI {
- public:
-  static constexpr size_t kCacheLineSize = 64;
-  static constexpr size_t kPrefetchOffset = 10;
-
- private:
-  static constexpr size_t kNoPrefetchSize =
-      kPrefetchOffset + kCacheLineSize /
-      sizeof(decltype(GHistIndexMatrix::row_ptr)::value_type);
-
- public:
-  static size_t NoPrefetchSize(size_t rows) {
-    return std::min(rows, kNoPrefetchSize);
-  }
-
-  template <typename T>
-  static constexpr size_t GetPrefetchStep() {
-    return PrefetchOneAPI::kCacheLineSize / sizeof(T);
-  }
-};
-
-constexpr size_t PrefetchOneAPI::kNoPrefetchSize;
-
-template<typename FPType, bool do_prefetch, typename BinIdxType>
+template<typename FPType, typename BinIdxType>
 void BuildHistDenseKernel(cl::sycl::queue qu,
                           const std::vector<GradientPair>& gpair,
                           const USMVector<GradientPair>& gpair_device,
@@ -331,7 +299,7 @@ void BuildHistDenseKernel(cl::sycl::queue qu,
   }).wait();
 }
 
-template<typename FPType, bool do_prefetch>
+template<typename FPType>
 void BuildHistSparseKernel(cl::sycl::queue qu,
                            const std::vector<GradientPair>& gpair,
                            const USMVector<GradientPair>& gpair_device,
@@ -420,7 +388,7 @@ void BuildHistSparseKernel(cl::sycl::queue qu,
   }).wait();
 }
 
-template<typename FPType, bool do_prefetch, typename BinIdxType>
+template<typename FPType, typename BinIdxType>
 void BuildHistDispatchKernel(cl::sycl::queue qu,
                              const std::vector<GradientPair>& gpair,
                              const USMVector<GradientPair>& gpair_device,
@@ -428,15 +396,15 @@ void BuildHistDispatchKernel(cl::sycl::queue qu,
                              const GHistIndexMatrixOneAPI& gmat, GHistRowOneAPI<FPType>& hist, bool isDense,
                              GHistRowOneAPI<FPType>& hist_buffer) {
   if (isDense) {
-    BuildHistDenseKernel<FPType, do_prefetch, BinIdxType>(qu, gpair, gpair_device, row_indices,
-                                                       gmat, gmat.nfeatures, hist, hist_buffer);
+    BuildHistDenseKernel<FPType, BinIdxType>(qu, gpair, gpair_device, row_indices,
+                                             gmat, gmat.nfeatures, hist, hist_buffer);
   } else {
-    BuildHistSparseKernel<FPType, do_prefetch>(qu, gpair, gpair_device, row_indices,
-                                                        gmat, hist, hist_buffer);
+    BuildHistSparseKernel<FPType>(qu, gpair, gpair_device, row_indices,
+                                  gmat, hist, hist_buffer);
   }
 }
 
-template<typename FPType, bool do_prefetch>
+template<typename FPType>
 void BuildHistKernel(cl::sycl::queue qu,
                      const std::vector<GradientPair>& gpair,
                      const USMVector<GradientPair>& gpair_device,
@@ -446,16 +414,16 @@ void BuildHistKernel(cl::sycl::queue qu,
   const bool is_dense = isDense;
   switch (gmat.index.GetBinTypeSize()) {
     case kUint8BinsTypeSize:
-      BuildHistDispatchKernel<FPType, do_prefetch, uint8_t>(qu, gpair, gpair_device, row_indices,
-                                                            gmat, hist, is_dense, hist_buffer);
+      BuildHistDispatchKernel<FPType, uint8_t>(qu, gpair, gpair_device, row_indices,
+                                               gmat, hist, is_dense, hist_buffer);
       break;
     case kUint16BinsTypeSize:
-      BuildHistDispatchKernel<FPType, do_prefetch, uint16_t>(qu, gpair, gpair_device, row_indices,
-                                                             gmat, hist, is_dense, hist_buffer);
+      BuildHistDispatchKernel<FPType, uint16_t>(qu, gpair, gpair_device, row_indices,
+                                                gmat, hist, is_dense, hist_buffer);
       break;
     case kUint32BinsTypeSize:
-      BuildHistDispatchKernel<FPType, do_prefetch, uint32_t>(qu, gpair, gpair_device, row_indices,
-                                                             gmat, hist, is_dense, hist_buffer);
+      BuildHistDispatchKernel<FPType, uint32_t>(qu, gpair, gpair_device, row_indices,
+                                                gmat, hist, is_dense, hist_buffer);
       break;
     default:
       CHECK(false);  // no default behavior
@@ -470,7 +438,7 @@ void GHistBuilderOneAPI<GradientSumT>::BuildHist(const std::vector<GradientPair>
                                                  GHistRowT& hist,
                                                  bool isDense,
                                                  GHistRowT& hist_buffer) {
-  BuildHistKernel<GradientSumT, false>(qu_, gpair, gpair_device, row_indices, gmat, isDense, hist, hist_buffer);
+  BuildHistKernel<GradientSumT>(qu_, gpair, gpair_device, row_indices, gmat, isDense, hist, hist_buffer);
 }
 
 template
@@ -502,11 +470,11 @@ void GHistBuilderOneAPI<GradientSumT>::SubtractionTrick(GHistRowT& self,
 }
 template
 void GHistBuilderOneAPI<float>::SubtractionTrick(GHistRowOneAPI<float>& self,
-                                           GHistRowOneAPI<float>& sibling,
-                                           GHistRowOneAPI<float>& parent);
+                                                 GHistRowOneAPI<float>& sibling,
+                                                 GHistRowOneAPI<float>& parent);
 template
 void GHistBuilderOneAPI<double>::SubtractionTrick(GHistRowOneAPI<double>& self,
-                                            GHistRowOneAPI<double>& sibling,
-                                            GHistRowOneAPI<double>& parent);
+                                                  GHistRowOneAPI<double>& sibling,
+                                                  GHistRowOneAPI<double>& parent);
 }  // namespace common
 }  // namespace xgboost
