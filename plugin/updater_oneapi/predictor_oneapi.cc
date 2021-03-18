@@ -54,46 +54,52 @@ class PredictorOneAPI : public Predictor {
   	}
   }
 
-  // ntree_limit is a very problematic parameter, as it's ambiguous in the context of
-  // multi-output and forest.  Same problem exists for tree_begin
-  void PredictBatch(DMatrix* dmat, PredictionCacheEntry* predts,
-                    const gbm::GBTreeModel& model, int tree_begin,
-                    uint32_t const ntree_limit = 0) override {
-    predictor_backend_->PredictBatch(dmat, predts, model, tree_begin, ntree_limit);
+  void PredictBatch(DMatrix *dmat, PredictionCacheEntry *predts,
+                    const gbm::GBTreeModel &model, uint32_t tree_begin,
+                    uint32_t tree_end = 0) const override {
+    predictor_backend_->PredictBatch(dmat, predts, model, tree_begin, tree_end);
   }
 
-  void InplacePredict(dmlc::any const &x, const gbm::GBTreeModel &model,
-                      float missing, PredictionCacheEntry *out_preds,
-                      uint32_t tree_begin, unsigned tree_end) const override {
-    predictor_backend_->InplacePredict(x, model, missing, out_preds, tree_begin, tree_end);
+  bool InplacePredict(dmlc::any const &x, std::shared_ptr<DMatrix> p_m,
+                      const gbm::GBTreeModel &model, float missing,
+                      PredictionCacheEntry *out_preds, uint32_t tree_begin,
+                      unsigned tree_end) const override {
+  	return predictor_backend_->InplacePredict(x, p_m, model, missing, out_preds, tree_begin, tree_end);
   }
 
   void PredictInstance(const SparsePage::Inst& inst,
                        std::vector<bst_float>* out_preds,
-                       const gbm::GBTreeModel& model, unsigned ntree_limit) override {
-    predictor_backend_->PredictInstance(inst, out_preds, model, ntree_limit);
+                       const gbm::GBTreeModel& model, unsigned ntree_limit) const override {
+  	predictor_backend_->PredictInstance(inst, out_preds, model, ntree_limit);
   }
 
   void PredictLeaf(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_preds,
-                   const gbm::GBTreeModel& model, unsigned ntree_limit) override {
+                   const gbm::GBTreeModel& model, unsigned ntree_limit) const override {
     predictor_backend_->PredictLeaf(p_fmat, out_preds, model, ntree_limit);
   }
 
-  void PredictContribution(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_contribs,
+  void PredictContribution(DMatrix* p_fmat, HostDeviceVector<float>* out_contribs,
                            const gbm::GBTreeModel& model, uint32_t ntree_limit,
                            std::vector<bst_float>* tree_weights,
                            bool approximate, int condition,
-                           unsigned condition_feature) override {
+                           unsigned condition_feature) const override {
     predictor_backend_->PredictContribution(p_fmat, out_contribs, model, ntree_limit, tree_weights, approximate, condition, condition_feature);
   }
 
   void PredictInteractionContributions(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_contribs,
                                        const gbm::GBTreeModel& model, unsigned ntree_limit,
                                        std::vector<bst_float>* tree_weights,
-                                       bool approximate) override {
+                                       bool approximate) const override {
     predictor_backend_->PredictInteractionContributions(p_fmat, out_contribs, model, ntree_limit, tree_weights, approximate);
   }
 
+ protected:
+  void InitOutPredictions(const MetaInfo& info,
+                          HostDeviceVector<bst_float>* out_preds,
+                          const gbm::GBTreeModel& model) const override {
+    predictor_backend_->InitOutPredictions(info, out_preds, model);
+  }
+ 
  private:
 
   std::unique_ptr<Predictor> predictor_backend_;
@@ -244,11 +250,58 @@ float GetLeafWeight(int ridx, const DeviceNodeOneAPI* tree, EntryOneAPI* data, s
   return n.GetWeight();
 }
 
+void DevicePredictInternal(cl::sycl::queue qu,
+                           DeviceMatrixOneAPI* dmat,
+                           HostDeviceVector<float>* out_preds,
+                           const gbm::GBTreeModel& model,
+                           size_t tree_begin,
+                           size_t tree_end) {
+  if (tree_end - tree_begin == 0) {
+    return;
+  }
+  DeviceModelOneAPI device_model;
+  device_model.Init(model, tree_begin, tree_end, qu);
+
+  auto& out_preds_vec = out_preds->HostVector();
+
+  DeviceNodeOneAPI* nodes = device_model.nodes.Data();
+  cl::sycl::buffer<float, 1> out_preds_buf(out_preds_vec.data(), out_preds_vec.size());
+  size_t* tree_segments = device_model.tree_segments.Data();
+  int* tree_group = device_model.tree_group.Data();
+  size_t* row_ptr = dmat->row_ptr.Data();
+  EntryOneAPI* data = dmat->data.Data();
+  int num_features = dmat->p_mat->Info().num_col_;
+  int num_rows = dmat->row_ptr.Size() - 1;
+  int num_group = model.learner_model_param->num_output_group;
+
+  qu.submit([&](cl::sycl::handler& cgh) {
+    auto out_predictions = out_preds_buf.template get_access<cl::sycl::access::mode::read_write>(cgh);
+    cgh.parallel_for<class PredictInternal>(cl::sycl::range<1>(num_rows), [=](cl::sycl::id<1> pid) {
+      int global_idx = pid[0];
+      if (global_idx >= num_rows) return;
+      if (num_group == 1) {
+        float sum = 0.0;
+        for (int tree_idx = tree_begin; tree_idx < tree_end; tree_idx++) {
+          const DeviceNodeOneAPI* tree = nodes + tree_segments[tree_idx - tree_begin];
+          sum += GetLeafWeight(global_idx, tree, data, row_ptr);
+        }
+        out_predictions[global_idx] += sum;
+      } else {
+        for (int tree_idx = tree_begin; tree_idx < tree_end; tree_idx++) {
+          const DeviceNodeOneAPI* tree = nodes + tree_segments[tree_idx - tree_begin];
+          int out_prediction_idx = global_idx * num_group + tree_group[tree_idx];
+          out_predictions[out_prediction_idx] += GetLeafWeight(global_idx, tree, data, row_ptr);
+        }
+      }
+    });
+  }).wait();
+}
+
 class GPUPredictorOneAPI : public Predictor {
  protected:
   void InitOutPredictions(const MetaInfo& info,
                           HostDeviceVector<bst_float>* out_preds,
-                          const gbm::GBTreeModel& model) const {
+                          const gbm::GBTreeModel& model) const override {
     CHECK_NE(model.learner_model_param->num_output_group, 0);
     size_t n = model.learner_model_param->num_output_group * info.num_row_;
     const auto& base_margin = info.base_margin_.HostVector();
@@ -278,51 +331,6 @@ class GPUPredictorOneAPI : public Predictor {
     }
   }
 
-  void DevicePredictInternal(DeviceMatrixOneAPI* dmat,
-                             HostDeviceVector<float>* out_preds,
-                             const gbm::GBTreeModel& model,
-                             size_t tree_begin,
-                             size_t tree_end) {
-    if (tree_end - tree_begin == 0) {
-      return;
-    }
-    model_.Init(model, tree_begin, tree_end, qu_);
-
-    auto& out_preds_vec = out_preds->HostVector();
-
-    DeviceNodeOneAPI* nodes = model_.nodes.Data();
-    cl::sycl::buffer<float, 1> out_preds_buf(out_preds_vec.data(), out_preds_vec.size());
-    size_t* tree_segments = model_.tree_segments.Data();
-    int* tree_group = model_.tree_group.Data();
-    size_t* row_ptr = dmat->row_ptr.Data();
-    EntryOneAPI* data = dmat->data.Data();
-    int num_features = dmat->p_mat->Info().num_col_;
-    int num_rows = dmat->row_ptr.Size() - 1;
-    int num_group = model.learner_model_param->num_output_group;
-
-    qu_.submit([&](cl::sycl::handler& cgh) {
-      auto out_predictions = out_preds_buf.template get_access<cl::sycl::access::mode::read_write>(cgh);
-      cgh.parallel_for<class PredictInternal>(cl::sycl::range<1>(num_rows), [=](cl::sycl::id<1> pid) {
-        int global_idx = pid[0];
-        if (global_idx >= num_rows) return;
-        if (num_group == 1) {
-          float sum = 0.0;
-          for (int tree_idx = tree_begin; tree_idx < tree_end; tree_idx++) {
-            const DeviceNodeOneAPI* tree = nodes + tree_segments[tree_idx - tree_begin];
-            sum += GetLeafWeight(global_idx, tree, data, row_ptr);
-          }
-          out_predictions[global_idx] += sum;
-        } else {
-          for (int tree_idx = tree_begin; tree_idx < tree_end; tree_idx++) {
-            const DeviceNodeOneAPI* tree = nodes + tree_segments[tree_idx - tree_begin];
-            int out_prediction_idx = global_idx * num_group + tree_group[tree_idx];
-            out_predictions[out_prediction_idx] += GetLeafWeight(global_idx, tree, data, row_ptr);
-          }
-        }
-      });
-    }).wait();
-  }
-
  public:
   explicit GPUPredictorOneAPI(GenericParameter const* generic_param) :
       Predictor::Predictor{generic_param}, cpu_predictor(Predictor::Create("cpu_predictor", generic_param)) {
@@ -337,99 +345,66 @@ class GPUPredictorOneAPI : public Predictor {
 
   // ntree_limit is a very problematic parameter, as it's ambiguous in the context of
   // multi-output and forest.  Same problem exists for tree_begin
-  void PredictBatch(DMatrix* dmat, PredictionCacheEntry* predts,
-                    const gbm::GBTreeModel& model, int tree_begin,
-                    uint32_t const ntree_limit = 0) override {
-    if (this->device_matrix_cache_.find(dmat) ==
+  void PredictBatch(DMatrix *dmat, PredictionCacheEntry *predts,
+                    const gbm::GBTreeModel &model, uint32_t tree_begin,
+                    uint32_t tree_end = 0) const override {
+/*    if (this->device_matrix_cache_.find(dmat) ==
         this->device_matrix_cache_.end()) {
       this->device_matrix_cache_.emplace(
           dmat, std::unique_ptr<DeviceMatrixOneAPI>(
                     new DeviceMatrixOneAPI(qu_, dmat)));
-    }
-    DeviceMatrixOneAPI* device_matrix = device_matrix_cache_.find(dmat)->second.get();
+    }*/
+//    DeviceMatrixOneAPI* device_matrix = device_matrix_cache_.find(dmat)->second.get();
+    DeviceMatrixOneAPI device_matrix(qu_, dmat); // reimplement caching of oneapi device matrix
 
     // tree_begin is not used, right now we just enforce it to be 0.
-    CHECK_EQ(tree_begin, 0);
     auto* out_preds = &predts->predictions;
-    CHECK_GE(predts->version, tree_begin);
-    if (out_preds->Size() == 0 && dmat->Info().num_row_ != 0) {
-      CHECK_EQ(predts->version, 0);
-    }
-    if (predts->version == 0) {
-      // out_preds->Size() can be non-zero as it's initialized here before any tree is
-      // built at the 0^th iterator.
-      this->InitOutPredictions(dmat->Info(), out_preds, model);
+    // This is actually already handled in gbm, but large amount of tests rely on the
+    // behaviour.
+    if (tree_end == 0) {
+      tree_end = model.trees.size();
     }
 
-    uint32_t const output_groups = model.learner_model_param->num_output_group;
-    CHECK_NE(output_groups, 0);
-    // Right now we just assume ntree_limit provided by users means number of tree layers
-    // in the context of multi-output model
-    uint32_t real_ntree_limit = ntree_limit * output_groups;
-    if (real_ntree_limit == 0 || real_ntree_limit > model.trees.size()) {
-      real_ntree_limit = static_cast<uint32_t>(model.trees.size());
+    if (tree_begin < tree_end) {
+      DevicePredictInternal(qu_, &device_matrix, out_preds, model, tree_begin, tree_end);
     }
-
-    uint32_t const end_version = (tree_begin + real_ntree_limit) / output_groups;
-    // When users have provided ntree_limit, end_version can be lesser, cache is violated
-    if (predts->version > end_version) {
-      CHECK_NE(ntree_limit, 0);
-      this->InitOutPredictions(dmat->Info(), out_preds, model);
-      predts->version = 0;
-    }
-    uint32_t const beg_version = predts->version;
-    CHECK_LE(beg_version, end_version);
-
-    if (beg_version < end_version) {
-      DevicePredictInternal(device_matrix, out_preds, model,
-                            beg_version * output_groups,
-                            end_version * output_groups);
-    }
-
-    // delta means {size of forest} * {number of newly accumulated layers}
-    uint32_t delta = end_version - beg_version;
-    CHECK_LE(delta, model.trees.size());
-    predts->Update(delta);
-
-    CHECK(out_preds->Size() == output_groups * dmat->Info().num_row_ ||
-          out_preds->Size() == dmat->Info().num_row_);
   }
 
-  void InplacePredict(dmlc::any const &x, const gbm::GBTreeModel &model,
-                      float missing, PredictionCacheEntry *out_preds,
-                      uint32_t tree_begin, unsigned tree_end) const override {
-    cpu_predictor->InplacePredict(x, model, missing, out_preds, tree_begin, tree_end);
+  bool InplacePredict(dmlc::any const &x, std::shared_ptr<DMatrix> p_m,
+                      const gbm::GBTreeModel &model, float missing,
+                      PredictionCacheEntry *out_preds, uint32_t tree_begin,
+                      unsigned tree_end) const override {
+  	return cpu_predictor->InplacePredict(x, p_m, model, missing, out_preds, tree_begin, tree_end);
   }
 
   void PredictInstance(const SparsePage::Inst& inst,
                        std::vector<bst_float>* out_preds,
-                       const gbm::GBTreeModel& model, unsigned ntree_limit) override {
-    cpu_predictor->PredictInstance(inst, out_preds, model, ntree_limit);
+                       const gbm::GBTreeModel& model, unsigned ntree_limit) const override {
+  	cpu_predictor->PredictInstance(inst, out_preds, model, ntree_limit);
   }
 
   void PredictLeaf(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_preds,
-                   const gbm::GBTreeModel& model, unsigned ntree_limit) override {
+                   const gbm::GBTreeModel& model, unsigned ntree_limit) const override {
     cpu_predictor->PredictLeaf(p_fmat, out_preds, model, ntree_limit);
   }
 
-  void PredictContribution(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_contribs,
+  void PredictContribution(DMatrix* p_fmat, HostDeviceVector<float>* out_contribs,
                            const gbm::GBTreeModel& model, uint32_t ntree_limit,
                            std::vector<bst_float>* tree_weights,
                            bool approximate, int condition,
-                           unsigned condition_feature) override {
+                           unsigned condition_feature) const override {
     cpu_predictor->PredictContribution(p_fmat, out_contribs, model, ntree_limit, tree_weights, approximate, condition, condition_feature);
   }
 
   void PredictInteractionContributions(DMatrix* p_fmat, HostDeviceVector<bst_float>* out_contribs,
                                        const gbm::GBTreeModel& model, unsigned ntree_limit,
                                        std::vector<bst_float>* tree_weights,
-                                       bool approximate) override {
+                                       bool approximate) const override {
     cpu_predictor->PredictInteractionContributions(p_fmat, out_contribs, model, ntree_limit, tree_weights, approximate);
   }
 
  private:
   cl::sycl::queue qu_;
-  DeviceModelOneAPI model_;
 
   std::mutex lock_;
   std::unique_ptr<Predictor> cpu_predictor;
