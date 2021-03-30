@@ -99,9 +99,7 @@ public:
       size_ = size_new;
       data_ = std::shared_ptr<T>(cl::sycl::malloc_shared<T>(size_, qu_), USMDeleter<T>(qu_));
       if (size_old > 0) {
-        qu.submit([&](cl::sycl::handler& cgh) {
-          cgh.memcpy(data_old.get(), data_.get(), size_old);
-        }).wait();
+        qu.memcpy(data_old.get(), data_.get(), size_old);
       }
     }
   }
@@ -116,14 +114,10 @@ public:
       size_ = size_new;
       data_ = std::shared_ptr<T>(cl::sycl::malloc_shared<T>(size_, qu_), USMDeleter<T>(qu_));
       if (size_old > 0) {
-        qu.submit([&](cl::sycl::handler& cgh) {
-          cgh.memcpy(data_old.get(), data_.get(), size_old);
-        }).wait();
+        qu.memcpy(data_old.get(), data_.get(), size_old);
       }
       if (size_new > size_old) {
-        qu.submit([&](cl::sycl::handler& cgh) {
-          cgh.fill(data_.get() + size_old, v, size_new - size_old);
-        }).wait();
+        qu.fill(data_.get() + size_old, v, size_new - size_old);
       }
     }
   }
