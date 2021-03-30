@@ -1,7 +1,7 @@
 /*!
- * Copyright 2017-2020 by Contributors
+ * Copyright 2017-2021 by Contributors
  * \file column_matrix_oneapi.h
- * \brief Utility for fast column-wise access
+ * \brief Utility for fast column-wise access for oneAPI plugin
  */
 
 #ifndef XGBOOST_COMMON_COLUMN_MATRIX_ONEAPI_H_
@@ -17,65 +17,12 @@ namespace xgboost {
 namespace common {
 
 template <typename BinIdxType>
-class ColumnOneAPI {
- public:
-  ColumnOneAPI(ColumnType type, common::Span<const BinIdxType> index, const uint32_t index_base)
-      : type_(type),
-        index_(index),
-        index_base_(index_base) {}
-
-  virtual ~ColumnOneAPI() = default;
-
-  uint32_t GetGlobalBinIdx(size_t idx) const {
-    return index_base_ + static_cast<uint32_t>(index_[idx]);
-  }
-
-  BinIdxType GetFeatureBinIdx(size_t idx) const { return index_[idx]; }
-
-  const uint32_t GetBaseIdx() const { return index_base_; }
-
-  common::Span<const BinIdxType> GetFeatureBinIdxPtr() const { return index_; }
-
-  ColumnType GetType() const { return type_; }
-
-  /* returns number of elements in column */
-  size_t Size() const { return index_.size(); }
-
- private:
-  /* type of column */
-  ColumnType type_;
-  /* bin indexes in range [0, max_bins - 1] */
-  common::Span<const BinIdxType> index_;
-  /* bin index offset for specific feature */
-  const uint32_t index_base_;
-};
-
-template <typename BinIdxType>
-class SparseColumnOneAPI: public ColumnOneAPI<BinIdxType> {
- public:
-  SparseColumnOneAPI(ColumnType type, common::Span<const BinIdxType> index,
-              uint32_t index_base, common::Span<const size_t> row_ind)
-      : ColumnOneAPI<BinIdxType>(type, index, index_base),
-        row_ind_(row_ind) {}
-
-  const size_t* GetRowData() const { return row_ind_.data(); }
-
-  size_t GetRowIdx(size_t idx) const {
-    return row_ind_.data()[idx];
-  }
-
- private:
-  /* indexes of rows */
-  common::Span<const size_t> row_ind_;
-};
-
-template <typename BinIdxType>
-class DenseColumnOneAPI: public ColumnOneAPI<BinIdxType> {
+class DenseColumnOneAPI: public Column<BinIdxType> {
  public:
   DenseColumnOneAPI(ColumnType type, common::Span<const BinIdxType> index,
               uint32_t index_base, bool* missing_flags,
               size_t feature_offset)
-      : ColumnOneAPI<BinIdxType>(type, index, index_base),
+      : Column<BinIdxType>(type, index, index_base),
         missing_flags_(missing_flags),
         feature_offset_(feature_offset) {}
 
@@ -99,12 +46,7 @@ class DenseColumnOneAPI: public ColumnOneAPI<BinIdxType> {
     GHistIndexMatrixOneAPI. */
 class ColumnMatrixOneAPI {
  public:
-  // get number of features
-  inline bst_uint GetNumFeature() const {
-    return static_cast<bst_uint>(type_.size());
-  }
-
-  // construct column matrix from GHistIndexMatrixOneAPI
+  // construct oneAPI column matrix from GHistIndexMatrixOneAPI
   inline void Init(cl::sycl::queue qu,
                    const GHistIndexMatrixOneAPI& gmat,
                    const DeviceMatrixOneAPI& dmat_device,
@@ -121,7 +63,7 @@ class ColumnMatrixOneAPI {
       CHECK_LE(gmat.cut.Ptrs()[fid + 1] - gmat.cut.Ptrs()[fid], max_val);
     }
     bool all_dense = gmat.IsDense(); // CHECK gmat.IsDense implicitly
-    gmat.GetFeatureCounts(&feature_counts_[0]);
+    gmat.GetFeatureCounts(feature_counts_);
     // classify features
     for (int32_t fid = 0; fid < nfeature; ++fid) {
       if (static_cast<double>(feature_counts_[fid])
@@ -209,7 +151,7 @@ class ColumnMatrixOneAPI {
   /* Fetch an individual column. This code should be used with type swith
      to determine type of bin id's */
   template <typename BinIdxType>
-  std::unique_ptr<const ColumnOneAPI<BinIdxType> > GetColumn(unsigned fid) const {
+  std::unique_ptr<const Column<BinIdxType> > GetColumn(unsigned fid) const {
     CHECK_EQ(sizeof(BinIdxType), bins_type_size_);
 
     const size_t feature_offset = feature_offsets_[fid];  // to get right place for certain feature
@@ -217,13 +159,13 @@ class ColumnMatrixOneAPI {
     common::Span<const BinIdxType> bin_index = { reinterpret_cast<const BinIdxType*>(
                                                  &index_[feature_offset * bins_type_size_]),
                                                  column_size };
-    std::unique_ptr<const ColumnOneAPI<BinIdxType> > res;
+    std::unique_ptr<const Column<BinIdxType> > res;
     if (type_[fid] == ColumnType::kDenseColumn) {
       res.reset(new DenseColumnOneAPI<BinIdxType>(type_[fid], bin_index, index_base_[fid],
                                                   missing_flags_.Begin(), feature_offset));
     } else {
-      res.reset(new SparseColumnOneAPI<BinIdxType>(type_[fid], bin_index, index_base_[fid],
-                                                   {&row_ind_[feature_offset], column_size}));
+      res.reset(new SparseColumn<BinIdxType>(type_[fid], bin_index, index_base_[fid],
+                                             {&row_ind_[feature_offset], column_size}));
     }
     return res;
   }
@@ -250,7 +192,7 @@ class ColumnMatrixOneAPI {
         });
       }).wait();
     } else {
-      const xgboost::EntryOneAPI *data_ptr = dmat_device.data.DataConst();
+      const xgboost::Entry *data_ptr = dmat_device.data.DataConst();
       const bst_row_t *offset_vec = dmat_device.row_ptr.DataConst();
       const size_t num_rows = dmat_device.row_ptr.Size() - 1;
       bool* missing_flags = missing_flags_.Data();
@@ -278,7 +220,7 @@ class ColumnMatrixOneAPI {
                        const size_t nrow,
                        const size_t nfeature) {
     T* local_index = reinterpret_cast<T*>(&index_[0]);
-    const xgboost::EntryOneAPI *data_ptr = dmat_device.data.DataConst();
+    const xgboost::Entry *data_ptr = dmat_device.data.DataConst();
     const bst_row_t *offset_vec = dmat_device.row_ptr.DataConst();
     const size_t num_rows = dmat_device.row_ptr.Size() - 1;
     bool* missing_flags = missing_flags_.Data();
