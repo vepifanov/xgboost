@@ -439,8 +439,6 @@ class GPUQuantileHistMakerOneAPI: public TreeUpdater {
     common::ColumnSampler column_sampler_;
     // the internal row sets
     RowSetCollectionOneAPI row_set_collection_;
-    // the temp space for split
-    std::vector<RowSetCollectionOneAPI::Split> row_split_tloc_;
     USMVector<SplitQuery> split_queries_device_;
     /*! \brief TreeNode Data: statistics for each constructed node */
     USMVector<NodeEntry> snode_;
@@ -452,8 +450,6 @@ class GPUQuantileHistMakerOneAPI: public TreeUpdater {
     /*! \brief feature with least # of bins. to be used for dense specialization
                of InitNewNode() */
     uint32_t fid_least_bins_;
-    /*! \brief local prediction cache; maps node id to leaf value */
-    std::vector<float> leaf_value_cache_;
 
     GHistBuilderOneAPI<GradientSumT> hist_builder_;
     std::unique_ptr<TreeUpdater> pruner_;

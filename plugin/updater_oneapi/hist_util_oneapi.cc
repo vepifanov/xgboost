@@ -34,7 +34,7 @@ uint32_t SearchBin(const bst_float* cut_values, const uint32_t* cut_ptrs, float 
   return idx;
 }
 
-uint32_t SearchBin(const bst_float* cut_values, const uint32_t* cut_ptrs, EntryOneAPI const& e) {
+uint32_t SearchBin(const bst_float* cut_values, const uint32_t* cut_ptrs, Entry const& e) {
   return SearchBin(cut_values, cut_ptrs, e.fvalue, e.index);
 }
 
@@ -44,7 +44,7 @@ void GHistIndexMatrixOneAPI::SetIndexData(cl::sycl::queue qu,
                                           const DeviceMatrixOneAPI &dmat_device,
                                           size_t nbins,
                                           uint32_t* offsets) {
-  const xgboost::EntryOneAPI *data_ptr = dmat_device.data.DataConst();
+  const xgboost::Entry *data_ptr = dmat_device.data.DataConst();
   const bst_row_t *offset_vec = dmat_device.row_ptr.DataConst();
   const size_t num_rows = dmat_device.row_ptr.Size() - 1;
   BinIdxType* index_data = index_data_span.data();

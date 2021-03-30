@@ -628,8 +628,7 @@ void GPUQuantileHistMakerOneAPI::Builder<GradientSumT>::Update(
 
   USMVector<GradientPair> gpair_device(qu_, gpair_h);
 
-  tree_evaluator_ =
-      TreeEvaluatorOneAPI(qu_, param_, p_fmat->Info().num_col_);
+  tree_evaluator_ = TreeEvaluatorOneAPI(qu_, param_, p_fmat->Info().num_col_);
   interaction_constraints_.Reset();
 
   this->InitData(gmat, gpair_h, gpair_device, *p_fmat, *p_tree);
@@ -663,14 +662,9 @@ bool GPUQuantileHistMakerOneAPI::Builder<GradientSumT>::UpdatePredictionCache(
   std::vector<bst_float>& out_preds = p_out_preds->HostVector();
   cl::sycl::buffer<float, 1> out_preds_buf(out_preds.data(), out_preds.size());
 
-  if (leaf_value_cache_.empty()) {
-    leaf_value_cache_.resize(p_last_tree_->param.num_nodes,
-                             std::numeric_limits<float>::infinity());
-  }
-
   CHECK_GT(out_preds.size(), 0U);
 
-  size_t n_nodes = row_set_collection_.end() - row_set_collection_.begin();
+  size_t n_nodes = row_set_collection_.Size();
   for (size_t node = 0; node < n_nodes; node++) {
     const RowSetCollectionOneAPI::Elem& rowset = row_set_collection_[node];
     if (rowset.begin != nullptr && rowset.end != nullptr && rowset.Size() != 0) {
@@ -777,8 +771,6 @@ void GPUQuantileHistMakerOneAPI::Builder<GradientSumT>::InitData(const GHistInde
   {
     // initialize the row set
     row_set_collection_.Clear();
-    // clear local prediction cache
-    leaf_value_cache_.clear();
     // initialize histogram collection
     uint32_t nbins = gmat.cut.Ptrs().back();
     hist_.Init(qu_, nbins);

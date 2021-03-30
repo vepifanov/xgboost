@@ -38,18 +38,9 @@ class RowSetCollectionOneAPI {
       return end - begin;
     }
   };
-  /* \brief specifies how to split a rowset into two */
-  struct Split {
-    std::vector<size_t> left;
-    std::vector<size_t> right;
-  };
 
-  inline std::vector<Elem>::const_iterator begin() const {  // NOLINT
-    return elem_of_each_node_.begin();
-  }
-
-  inline std::vector<Elem>::const_iterator end() const {  // NOLINT
-    return elem_of_each_node_.end();
+  inline size_t Size() const {
+    return elem_of_each_node_.size();
   }
 
   /*! \brief return corresponding element set given the node_id */
@@ -73,18 +64,6 @@ class RowSetCollectionOneAPI {
   // initialize node id 0->everything
   inline void Init() {
     CHECK_EQ(elem_of_each_node_.size(), 0U);
-
-    if (row_indices_.Empty()) {  // edge case: empty instance set
-      // assign arbitrary address here, to bypass nullptr check
-      // (nullptr usually indicates a nonexistent rowset, but we want to
-      //  indicate a valid rowset that happens to have zero length and occupies
-      //  the whole instance set)
-      // this is okay, as BuildHist will compute (end-begin) as the set size
-      const size_t* begin = reinterpret_cast<size_t*>(20);
-      const size_t* end = begin;
-      elem_of_each_node_.emplace_back(Elem(begin, end, 0));
-      return;
-    }
 
     const size_t* begin = row_indices_.Begin();
     const size_t* end = row_indices_.End();

@@ -202,11 +202,11 @@ class DeviceModelOneAPI {
   }
 };
 
-float GetFvalue(int ridx, int fidx, EntryOneAPI* data, size_t* row_ptr, bool& is_missing) {
+float GetFvalue(int ridx, int fidx, Entry* data, size_t* row_ptr, bool& is_missing) {
   // Binary search
   auto begin_ptr = data + row_ptr[ridx];
   auto end_ptr = data + row_ptr[ridx + 1];
-  EntryOneAPI* previous_middle = nullptr;
+  Entry* previous_middle = nullptr;
   while (end_ptr != begin_ptr) {
     auto middle = begin_ptr + (end_ptr - begin_ptr) / 2;
     if (middle == previous_middle) {
@@ -228,7 +228,7 @@ float GetFvalue(int ridx, int fidx, EntryOneAPI* data, size_t* row_ptr, bool& is
   return 0.0;
 }
 
-float GetLeafWeight(int ridx, const DeviceNodeOneAPI* tree, EntryOneAPI* data, size_t* row_ptr) {
+float GetLeafWeight(int ridx, const DeviceNodeOneAPI* tree, Entry* data, size_t* row_ptr) {
   DeviceNodeOneAPI n = tree[0];
   int node_id = 0;
   bool is_missing;
@@ -269,7 +269,7 @@ void DevicePredictInternal(cl::sycl::queue qu,
   size_t* tree_segments = device_model.tree_segments.Data();
   int* tree_group = device_model.tree_group.Data();
   size_t* row_ptr = dmat->row_ptr.Data();
-  EntryOneAPI* data = dmat->data.Data();
+  Entry* data = dmat->data.Data();
   int num_features = dmat->p_mat->Info().num_col_;
   int num_rows = dmat->row_ptr.Size() - 1;
   int num_group = model.learner_model_param->num_output_group;
