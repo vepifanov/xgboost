@@ -1,6 +1,6 @@
 /*!
- * Copyright 2017-2020 by Contributors
- * \file hist_uti_oneapi.h
+ * Copyright 2017-2021 by Contributors
+ * \file hist_util_oneapi.h
  */
 #ifndef XGBOOST_COMMON_HIST_UTIL_ONEAPI_H_
 #define XGBOOST_COMMON_HIST_UTIL_ONEAPI_H_
@@ -82,7 +82,7 @@ private:
 
 uint32_t SearchBin(bst_float* cut_values, uint32_t* cut_ptrs, float value, uint32_t column_id);
 
-uint32_t SearchBin(bst_float* cut_values, uint32_t* cut_ptrs, EntryOneAPI const& e);
+uint32_t SearchBin(bst_float* cut_values, uint32_t* cut_ptrs, Entry const& e);
 
 struct IndexOneAPI {
   IndexOneAPI() {
@@ -218,7 +218,7 @@ struct GHistIndexMatrixOneAPI {
   void ResizeIndex(const size_t n_offsets, const size_t n_index,
                    const bool isDense);
 
-  inline void GetFeatureCounts(size_t* counts) const {
+  inline void GetFeatureCounts(std::vector<size_t>& counts) const {
     auto nfeature = cut_device.Ptrs().Size() - 1;
     for (unsigned fid = 0; fid < nfeature; ++fid) {
       auto ibegin = cut_device.Ptrs()[fid];
