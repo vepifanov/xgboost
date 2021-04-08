@@ -1,19 +1,10 @@
 /*!
- * Copyright 2017-2020 by Contributors
+ * Copyright 2017-2021 by Contributors
  * \file hist_util_oneapi.cc
  */
-#include <dmlc/timer.h>
-#include <dmlc/omp.h>
-
-#include <rabit/rabit.h>
-#include <numeric>
 #include <vector>
+#include <limits>
 
-#include "xgboost/base.h"
-#include "../../src/common/common.h"
-#include "../../src/common/random.h"
-#include "../../src/common/quantile.h"
-#include "./../../src/tree/updater_quantile_hist.h"
 #include "column_matrix_oneapi.h"
 #include "hist_util_oneapi.h"
 
@@ -22,20 +13,16 @@
 namespace xgboost {
 namespace common {
 
-uint32_t SearchBin(const bst_float* cut_values, const uint32_t* cut_ptrs, float value, uint32_t column_id) {
-  auto beg = cut_ptrs[column_id];
-  auto end = cut_ptrs[column_id + 1];
+uint32_t SearchBin(const bst_float* cut_values, const uint32_t* cut_ptrs, Entry const& e) {
+  auto beg = cut_ptrs[e.index];
+  auto end = cut_ptrs[e.index + 1];
   const auto &values = cut_values;
-  auto it = std::upper_bound(cut_values + beg, cut_values + end, value);
+  auto it = std::upper_bound(cut_values + beg, cut_values + end, e.fvalue);
   uint32_t idx = it - cut_values;
   if (idx == end) {
     idx -= 1;
   }
   return idx;
-}
-
-uint32_t SearchBin(const bst_float* cut_values, const uint32_t* cut_ptrs, Entry const& e) {
-  return SearchBin(cut_values, cut_ptrs, e.fvalue, e.index);
 }
 
 template <typename BinIdxType>
@@ -93,7 +80,6 @@ void GHistIndexMatrixOneAPI::Init(cl::sycl::queue qu,
   cut_device.Init(qu, cut);
 
   max_num_bins = max_bins;
-  const int32_t nthread = omp_get_max_threads();
   const uint32_t nbins = cut.Ptrs().back();
   this->nbins = nbins;
   hit_count.resize(nbins, 0);
@@ -148,26 +134,17 @@ void GHistIndexMatrixOneAPI::Init(cl::sycl::queue qu,
 }
 
 /*!
- * \brief fill a histogram by zeros in range [begin, end)
+ * \brief Fill histogram with zeroes
  */
 template<typename GradientSumT>
-void InitializeHistByZeroes(GHistRowOneAPI<GradientSumT>& hist, size_t begin, size_t end) {
- // switch to handler fill after moving to new compiler
-#if defined(XGBOOST_STRICT_R_MODE) && XGBOOST_STRICT_R_MODE == 1
-  std::fill(hist.Begin() + begin, hist.Begin() + end,
-            xgboost::detail::GradientPairInternal<GradientSumT>());
-#else  // defined(XGBOOST_STRICT_R_MODE) && XGBOOST_STRICT_R_MODE == 1
-  memset(hist.Data() + begin, '\0', (end-begin)*
-         sizeof(xgboost::detail::GradientPairInternal<GradientSumT>));
-#endif  // defined(XGBOOST_STRICT_R_MODE) && XGBOOST_STRICT_R_MODE == 1
+void InitHist(cl::sycl::queue qu, GHistRowOneAPI<GradientSumT>& hist, size_t size) {
+  qu.fill(hist.Begin(), xgboost::detail::GradientPairInternal<GradientSumT>(), size);
 }
-template void InitializeHistByZeroes(GHistRowOneAPI<float>& hist, size_t begin,
-                                    size_t end);
-template void InitializeHistByZeroes(GHistRowOneAPI<double>& hist, size_t begin,
-                                    size_t end);
+template void InitHist(cl::sycl::queue qu, GHistRowOneAPI<float>& hist, size_t size);
+template void InitHist(cl::sycl::queue qu, GHistRowOneAPI<double>& hist, size_t size);
 
 /*!
- * \brief Copy hist from src to dst in range [begin, end)
+ * \brief Copy histogram from src to dst
  */
 template<typename GradientSumT>
 void CopyHist(cl::sycl::queue qu,

@@ -5,37 +5,22 @@
 #ifndef XGBOOST_COMMON_HIST_UTIL_ONEAPI_H_
 #define XGBOOST_COMMON_HIST_UTIL_ONEAPI_H_
 
-#include <xgboost/data.h>
-#include <xgboost/generic_parameters.h>
-#include <limits>
 #include <vector>
-#include <algorithm>
-#include <memory>
-#include <utility>
-#include <map>
 
 #include "data_oneapi.h"
 #include "row_set_oneapi.h"
-
-#include "../../src/common/row_set.h"
-#include "../../src/common/threading_utils.h"
-#include "../../src/tree/param.h"
-#include "../../src/common/quantile.h"
-#include "../../src/common/timer.h"
-#include "../../src/common/hist_util.h"
-#include "../../src/common/common.h"
-#include "../include/rabit/rabit.h"
 
 #include "CL/sycl.hpp"
 
 namespace xgboost {
 namespace common {
 
-using GHistIndexRow = Span<uint32_t const>;
-
 template<typename GradientSumT>
 using GHistRowOneAPI = USMVector<xgboost::detail::GradientPairInternal<GradientSumT> >;
 
+/*!
+ * \brief OneAPI implementation of HistogramCuts stored in USM buffers to provide access from device kernels
+ */
 class HistogramCutsOneAPI {
 protected:
   using BinIdx = uint32_t;
@@ -57,21 +42,10 @@ public:
     min_vals_.Init(qu_, cuts.min_vals_.HostVector());
   }
 
-  uint32_t FeatureBins(uint32_t feature) const {
-    return cut_ptrs_[feature + 1] - cut_ptrs_[feature];
-  }
-
-  // Getters.  Cuts should be of no use after building histogram indices, but currently
-  // it's deeply linked with quantile_hist, gpu sketcher and gpu_hist.  So we preserve
-  // these for now.
+  // Getters for USM buffers to pass pointers into device kernels
   const USMVector<uint32_t>& Ptrs()      const { return cut_ptrs_;   }
   const USMVector<float>&    Values()    const { return cut_values_; }
   const USMVector<float>&    MinValues() const { return min_vals_;   }
-
-  size_t TotalBins() const { return cut_ptrs_[cut_ptrs_.Size() - 1]; }
-
-  // Return the index of a cut point that is strictly greater than the input
-  // value, or the last available index if none exists
 
 private:
   USMVector<bst_float> cut_values_;
@@ -80,10 +54,9 @@ private:
   cl::sycl::queue qu_;
 };
 
-uint32_t SearchBin(bst_float* cut_values, uint32_t* cut_ptrs, float value, uint32_t column_id);
-
-uint32_t SearchBin(bst_float* cut_values, uint32_t* cut_ptrs, Entry const& e);
-
+/*!
+ * \brief Index data and offsets stored in USM buffers to provide access from device kernels
+ */
 struct IndexOneAPI {
   IndexOneAPI() {
     SetBinTypeSize(binTypeSize_);
@@ -139,23 +112,24 @@ struct IndexOneAPI {
     return offset_.DataConst();
   }
 
-  size_t OffsetSize() const {
-    return offset_.Size();
-  }
   size_t Size() const {
     return data_.Size() / (binTypeSize_);
   }
+
   void Resize(const size_t nBytesData) {
     data_.Resize(qu_, nBytesData);
   }
+
   void ResizeOffset(const size_t nDisps) {
     offset_.Resize(qu_, nDisps);
     p_ = nDisps;
   }
-  uint8_t* begin() const {  // NOLINT
+
+  uint8_t* begin() const {
     return data_.Begin();
   }
-  uint8_t* end() const {  // NOLINT
+
+  uint8_t* end() const {
     return data_.End();
   }
 
@@ -187,10 +161,9 @@ struct IndexOneAPI {
 
 
 /*!
- * \brief preprocessed global index matrix, in CSR format
+ * \brief Preprocessed global index matrix, in CSR format, stored in USM buffers
  *
- *  Transform floating values to integer index in histogram This is a global histogram
- *  index for CPU histogram.  On GPU ellpack page is used.
+ *  Transform floating values to integer index in histogram
  */
 struct GHistIndexMatrixOneAPI {
   /*! \brief row pointer to rows by element position */
@@ -207,7 +180,8 @@ struct GHistIndexMatrixOneAPI {
   size_t max_num_bins;
   size_t nbins;
   size_t nfeatures;
-  // Create a global histogram matrix, given cut
+
+  // Create a global histogram matrix based on a given DMatrix device wrapper
   void Init(cl::sycl::queue qu, const DeviceMatrixOneAPI& p_fmat_device, int max_num_bins);
 
   template <typename BinIdxType>
@@ -239,13 +213,15 @@ struct GHistIndexMatrixOneAPI {
 class ColumnMatrixOneAPI;
 
 /*!
- * \brief fill a histogram by zeros
+ * \brief Fill histogram with zeroes
  */
 template<typename GradientSumT>
-void InitializeHistByZeroes(GHistRowOneAPI<GradientSumT>& hist, size_t begin, size_t end);
+void InitHist(cl::sycl::queue qu,
+			  GHistRowOneAPI<GradientSumT>& hist,
+			  size_t size);
 
 /*!
- * \brief Copy hist from src to dst in range [begin, end)
+ * \brief Copy histogram from src to dst
  */
 template<typename GradientSumT>
 void CopyHist(cl::sycl::queue qu,
@@ -253,7 +229,7 @@ void CopyHist(cl::sycl::queue qu,
               size_t size);
 
 /*!
- * \brief Compute Subtraction: dst = src1 - src2 in range [begin, end)
+ * \brief Compute subtraction: dst = src1 - src2
  */
 template<typename GradientSumT>
 void SubtractionHist(cl::sycl::queue qu,
@@ -262,14 +238,14 @@ void SubtractionHist(cl::sycl::queue qu,
                      size_t size);
 
 /*!
- * \brief histogram of gradient statistics for multiple nodes
+ * \brief Histograms of gradient statistics for multiple nodes
  */
 template<typename GradientSumT>
 class HistCollectionOneAPI {
  public:
   using GHistRowT = GHistRowOneAPI<GradientSumT>;
 
-  // access histogram for i-th node
+  // Access histogram for i-th node
   GHistRowT& operator[](bst_uint nid) {
     return data_[nid];
   }
@@ -278,36 +254,26 @@ class HistCollectionOneAPI {
     return data_[nid];
   }
 
-  // have we computed a histogram for i-th node?
-  bool RowExists(bst_uint nid) const {
-    return (nid < data_.size() && !data_[nid].Empty());
-  }
-
-  // initialize histogram collection
+  // Initialize histogram collection
   void Init(cl::sycl::queue qu, uint32_t nbins) {
     qu_ = qu;
     if (nbins_ != nbins) {
       nbins_ = nbins;
-      // quite expensive operation, so let's do this only once
       data_.clear();
     }
-    n_nodes_added_ = 0;
   }
 
-  // create an empty histogram for i-th node
+  // Create an empty histogram for i-th node
   void AddHistRow(bst_uint nid) {
     if (nid >= data_.size()) {
       data_.resize(nid + 1);
     }
     data_[nid].Resize(qu_, nbins_, xgboost::detail::GradientPairInternal<GradientSumT>(0, 0));
-    n_nodes_added_++;
   }
 
  private:
-  /*! \brief number of all bins over all features */
+  /*! \brief Number of all bins over all features */
   uint32_t nbins_ = 0;
-  /*! \brief amount of active nodes in hist collection */
-  uint32_t n_nodes_added_ = 0;
 
   std::vector<GHistRowT> data_;
 
@@ -316,8 +282,6 @@ class HistCollectionOneAPI {
 
 /*!
  * \brief Stores temporary histograms to compute them in parallel
- * Supports processing multiple tree-nodes for nested parallelism
- * Able to reduce histograms across threads in efficient way
  */
 template<typename GradientSumT>
 class ParallelGHistBuilderOneAPI {
@@ -332,8 +296,8 @@ class ParallelGHistBuilderOneAPI {
     }
   }
 
-  void Reset(size_t nthreads) {
-    hist_device_buffer_.Resize(qu_, nthreads * nbins_ * 2);
+  void Reset(size_t nblocks) {
+    hist_device_buffer_.Resize(qu_, nblocks * nbins_ * 2);
   }
 
   GHistRowT& GetDeviceBuffer() {
@@ -341,21 +305,19 @@ class ParallelGHistBuilderOneAPI {
   }
 
  protected:
-
-  /*! \brief number of bins in each histogram */
+  /*! \brief Number of bins in each histogram */
   size_t nbins_ = 0;
-  /*! \brief number of nodes which will be processed in parallel  */
-  size_t nodes_ = 0;
-  /*! \brief Buffer for additional histograms for Parallel processing  */
+  /*! \brief Buffers for histograms for all nodes processed */
   HistCollectionOneAPI<GradientSumT> hist_buffer_;
 
+  /*! \brief Buffer for additional histograms for Parallel processing  */
   GHistRowT hist_device_buffer_;
 
   cl::sycl::queue qu_;
 };
 
 /*!
- * \brief builder for histograms of gradient statistics
+ * \brief Builder for histograms of gradient statistics
  */
 template<typename GradientSumT>
 class GHistBuilderOneAPI {
@@ -363,9 +325,9 @@ class GHistBuilderOneAPI {
   using GHistRowT = GHistRowOneAPI<GradientSumT>;
 
   GHistBuilderOneAPI() = default;
-  GHistBuilderOneAPI(cl::sycl::queue qu, size_t nthread, uint32_t nbins) : qu_{qu}, nthread_{nthread}, nbins_{nbins} {}
+  GHistBuilderOneAPI(cl::sycl::queue qu, uint32_t nbins) : qu_{qu}, nbins_{nbins} {}
 
-  // construct a histogram via histogram aggregation
+  // Construct a histogram via histogram aggregation
   void BuildHist(const std::vector<GradientPair>& gpair,
                  const USMVector<GradientPair>& gpair_device,
                  const RowSetCollectionOneAPI::Elem& row_indices,
@@ -374,7 +336,7 @@ class GHistBuilderOneAPI {
                  bool isDense,
                  GHistRowT& hist_buffer);
 
-  // construct a histogram via subtraction trick
+  // Construct a histogram via subtraction trick
   void SubtractionTrick(GHistRowT& self,
                         GHistRowT& sibling,
                         GHistRowT& parent);
@@ -384,9 +346,7 @@ class GHistBuilderOneAPI {
   }
 
  private:
-  /*! \brief number of threads for parallel computation */
-  size_t nthread_ { 0 };
-  /*! \brief number of all bins over all features */
+  /*! \brief Number of all bins over all features */
   uint32_t nbins_ { 0 };
 
   cl::sycl::queue qu_;
