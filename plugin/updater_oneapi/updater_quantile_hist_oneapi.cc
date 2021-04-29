@@ -16,6 +16,8 @@ namespace tree {
 
 DMLC_REGISTRY_FILE_TAG(updater_quantile_hist_oneapi);
 
+DMLC_REGISTER_PARAMETER(OneAPIHistMakerTrainParam);
+
 void QuantileHistMakerOneAPI::Configure(const Args& args) {
   GenericParameter param;
   param.UpdateAllowUnknown(args);
