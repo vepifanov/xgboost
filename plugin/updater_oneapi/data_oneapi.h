@@ -47,7 +47,7 @@ public:
 
   USMVector(cl::sycl::queue qu, size_t size, T v) : qu_(qu), size_(size) {
     data_ = std::shared_ptr<T>(cl::sycl::malloc_shared<T>(size_, qu_), USMDeleter<T>(qu_));
-    qu_.fill(data_.get(), v, size_);
+    qu_.fill(data_.get(), v, size_).wait();
   }
 
   USMVector(cl::sycl::queue qu, const std::vector<T> &vec) : qu_(qu) {
@@ -97,7 +97,7 @@ public:
       size_ = size_new;
       data_ = std::shared_ptr<T>(cl::sycl::malloc_shared<T>(size_, qu_), USMDeleter<T>(qu_));
       if (size_old > 0) {
-        qu_.memcpy(data_old.get(), data_.get(), size_old);
+        qu_.memcpy(data_.get(), data_old.get(), sizeof(T) * size_old).wait();
       }
     }
   }
@@ -112,10 +112,10 @@ public:
       size_ = size_new;
       data_ = std::shared_ptr<T>(cl::sycl::malloc_shared<T>(size_, qu_), USMDeleter<T>(qu_));
       if (size_old > 0) {
-        qu_.memcpy(data_old.get(), data_.get(), size_old);
+        qu_.memcpy(data_.get(), data_old.get(), sizeof(T) * size_old).wait();
       }
       if (size_new > size_old) {
-        qu_.fill(data_.get() + size_old, v, size_new - size_old);
+        qu_.fill(data_.get() + size_old, v, size_new - size_old).wait();
       }
     }
   }

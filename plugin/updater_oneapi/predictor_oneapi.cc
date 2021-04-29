@@ -1,5 +1,5 @@
 /*!
- * Copyright by Contributors 2017-2020
+ * Copyright by Contributors 2017-2021
  */
 #include <cstddef>
 #include <limits>
