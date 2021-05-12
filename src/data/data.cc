@@ -1039,6 +1039,8 @@ SparsePage::Push(const data::DenseAdapterBatch& batch, float missing, int nthrea
 template uint64_t
 SparsePage::Push(const data::CSRAdapterBatch& batch, float missing, int nthread);
 template uint64_t
+SparsePage::Push(const data::CSRArrayAdapterBatch& batch, float missing, int nthread);
+template uint64_t
 SparsePage::Push(const data::CSCAdapterBatch& batch, float missing, int nthread);
 template uint64_t
 SparsePage::Push(const data::DataTableAdapterBatch& batch, float missing, int nthread);

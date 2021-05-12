@@ -16,6 +16,7 @@ struct GenericParameter : public XGBoostParameter<GenericParameter> {
   // Constant representing the device ID of CPU.
   static int32_t constexpr kCpuId = -1;
   static int64_t constexpr kDefaultSeed = 0;
+  static int32_t constexpr kDefaultId = -1;
 
  public:
   // stored random seed
@@ -32,6 +33,9 @@ struct GenericParameter : public XGBoostParameter<GenericParameter> {
   // gpu page size in external memory mode, 0 means using the default.
   size_t gpu_page_size;
   bool validate_parameters {false};
+
+  // primary oneAPI device, -1 means default device
+  int device_id;
 
   void CheckDeprecated() {
     if (this->n_gpus != 0) {
@@ -83,6 +87,10 @@ struct GenericParameter : public XGBoostParameter<GenericParameter> {
 "\n\tDeprecated. Single process multi-GPU training is no longer supported."
 "\n\tPlease switch to distributed training with one process per GPU."
 "\n\tThis can be done using Dask or Spark.  See documentation for details.");
+    DMLC_DECLARE_FIELD(device_id)
+        .set_default(kDefaultId)
+        .set_lower_bound(-1)
+        .describe("The primary oneAPI device ordinal.");
   }
 
  private:
