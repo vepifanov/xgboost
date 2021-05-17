@@ -194,6 +194,10 @@ if (USE_CUDA)
   xgboost_set_cuda_flags(xgboost)
 endif (USE_CUDA)
 
+if (PLUGIN_UPDATER_ONEAPI)
+  target_compile_definitions(xgboost PRIVATE -DXGBOOST_USE_ONEAPI=1)
+endif (PLUGIN_UPDATER_ONEAPI)
+
 #-- Hide all C++ symbols
 if (HIDE_CXX_SYMBOLS)
   foreach(target objxgboost xgboost dmlc)
